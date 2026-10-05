@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-learn",
+  "name": "Course Notes Tutor",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.7",
+  "description": "拍照整理课堂笔记到课程文件夹，并结合课程资料和教授笔记通过对话查找知识漏洞。",
+  "author": "initxd",
+  "isDesktopOnly": false
+}

@@ -1,0 +1,23 @@
+{
+  "name": "obsidian-learn",
+  "version": "0.1.0",
+  "description": "拍照整理课堂笔记，并结合课程资料通过对话查找知识漏洞",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test": "node --test --experimental-strip-types test/*.test.ts"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "builtin-modules": "^5.4.0",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.13.1",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "ical.js": "^2.2.1"
+  }
+}
