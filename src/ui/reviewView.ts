@@ -5,6 +5,7 @@ import type { Turn } from "../llm/types.ts";
 import type CourseTutorPlugin from "../main.ts";
 import { loadMaterials } from "../materials.ts";
 import { REPORT_REQUEST, reviewSystem } from "../prompts.ts";
+import { confirmModal } from "./confirm.ts";
 import { CoursePicker, type PickerState } from "./coursePicker.ts";
 
 export const REVIEW_VIEW_TYPE = "course-tutor-review";
@@ -133,7 +134,10 @@ export class ReviewView extends ItemView {
     const lectureFiles = this.selected(repo.lectureNotesFor(course, date).map((file) => ({ file, suggested: true })));
     const courseNoteFiles = this.selected(repo.courseNoteCandidates(course, date));
     const professorFiles = this.selected(repo.professorCandidates(course, date));
-    if (lectureFiles.length === 0 && !confirm("没有勾选学生笔记，模型只能凭对话判断你的掌握情况。继续？")) return;
+    if (
+      lectureFiles.length === 0 &&
+      !(await confirmModal(this.app, "没有勾选学生笔记，模型只能凭对话判断你的掌握情况。继续？"))
+    ) return;
 
     this.session = null;
     this.log = [];

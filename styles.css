@@ -41,3 +41,18 @@
 .ct-msg-assistant { background: var(--background-secondary); }
 .ct-msg-system { color: var(--text-muted); border: 1px dashed var(--background-modifier-border); }
 .ct-composer textarea { width: 100%; resize: vertical; }
+
+.ct-modal.ct-dragover { outline: 2px dashed var(--interactive-accent); outline-offset: -6px; }
+.ct-photo-buttons button { flex: 1; }
+
+/* iPhone / iPad：触控目标不小于 44pt（Apple HIG） */
+.is-mobile .ct-photo-buttons button,
+.is-mobile .ct-actions button,
+.is-mobile .ct-row button,
+.is-mobile .ct-row select,
+.is-mobile .ct-row input[type="date"] { min-height: 44px; }
+.is-mobile .ct-thumb-controls button { min-width: 36px; min-height: 36px; }
+.is-mobile .ct-event { padding: 10px; }
+.is-mobile .ct-file { padding: 8px 0; }
+.is-mobile .ct-file input[type="checkbox"] { width: 22px; height: 22px; }
+.is-phone .ct-thumbs { grid-template-columns: repeat(3, 1fr); }

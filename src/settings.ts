@@ -1,16 +1,20 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, SecretComponent, Setting } from "obsidian";
 import type CourseTutorPlugin from "./main.ts";
 import type { Effort } from "./llm/anthropic.ts";
 import type { MaxTokensParam } from "./llm/openai.ts";
 
 export interface CourseTutorSettings {
   provider: "anthropic" | "openai";
+  /** 旧版 Obsidian（< 1.11.4）没有密钥存储时的明文回退 */
   anthropicApiKey: string;
+  /** Obsidian 密钥存储中的条目名 */
+  anthropicSecretId: string;
   anthropicModel: string;
   anthropicEffort: Effort | "";
   anthropicFallbacks: boolean;
   openaiBaseUrl: string;
   openaiApiKey: string;
+  openaiSecretId: string;
   openaiModel: string;
   openaiMaxTokensParam: MaxTokensParam;
 
@@ -32,11 +36,13 @@ export interface CourseTutorSettings {
 export const DEFAULT_SETTINGS: CourseTutorSettings = {
   provider: "anthropic",
   anthropicApiKey: "",
+  anthropicSecretId: "",
   anthropicModel: "claude-opus-5-5",
   anthropicEffort: "high",
   anthropicFallbacks: true,
   openaiBaseUrl: "https://api.openai.com/v1",
   openaiApiKey: "",
+  openaiSecretId: "",
   openaiModel: "",
   openaiMaxTokensParam: "max_tokens",
 
@@ -58,6 +64,42 @@ export const DEFAULT_SETTINGS: CourseTutorSettings = {
 export class CourseTutorSettingTab extends PluginSettingTab {
   constructor(app: App, private plugin: CourseTutorPlugin) {
     super(app, plugin);
+  }
+
+  /**
+   * Obsidian ≥ 1.11.4 使用系统密钥存储（Key 不写入 data.json，不会随仓库同步）；
+   * 更早的版本回退为明文保存在 data.json。
+   */
+  private apiKeySetting(
+    containerEl: HTMLElement,
+    secretKey: "anthropicSecretId" | "openaiSecretId",
+    plainKey: "anthropicApiKey" | "openaiApiKey",
+  ): void {
+    const s = this.plugin.settings;
+    const setting = new Setting(containerEl).setName("API Key");
+    if (hasSecretStorage(this.app)) {
+      setting.setDesc(
+        s[plainKey]
+          ? "检测到旧版明文 Key。选择或新建一个密钥条目后，明文 Key 会从 data.json 中删除。"
+          : "选择或新建一个密钥条目。Key 保存在 Obsidian 的密钥存储中，不写入插件的 data.json。",
+      );
+      setting.addComponent((el) =>
+        new SecretComponent(this.app, el).setValue(s[secretKey]).onChange(async (v) => {
+          s[secretKey] = v;
+          if (v) s[plainKey] = "";
+          await this.plugin.saveSettings();
+        }),
+      );
+    } else {
+      setting.setDesc("当前 Obsidian 版本没有密钥存储，Key 以明文保存在插件的 data.json 中。");
+      setting.addText((t) => {
+        t.inputEl.type = "password";
+        t.setValue(s[plainKey]).onChange(async (v) => {
+          s[plainKey] = v.trim();
+          await this.plugin.saveSettings();
+        });
+      });
+    }
   }
 
   display(): void {
@@ -83,13 +125,7 @@ export class CourseTutorSettingTab extends PluginSettingTab {
       );
 
     if (s.provider === "anthropic") {
-      new Setting(containerEl).setName("API Key").addText((t) => {
-        t.inputEl.type = "password";
-        t.setValue(s.anthropicApiKey).onChange(async (v) => {
-          s.anthropicApiKey = v.trim();
-          await save();
-        });
-      });
+      this.apiKeySetting(containerEl, "anthropicSecretId", "anthropicApiKey");
       new Setting(containerEl).setName("模型 ID").addText((t) =>
         t.setPlaceholder("claude-opus-5-5").setValue(s.anthropicModel).onChange(async (v) => {
           s.anthropicModel = v.trim();
@@ -122,13 +158,7 @@ export class CourseTutorSettingTab extends PluginSettingTab {
           await save();
         }),
       );
-      new Setting(containerEl).setName("API Key").addText((t) => {
-        t.inputEl.type = "password";
-        t.setValue(s.openaiApiKey).onChange(async (v) => {
-          s.openaiApiKey = v.trim();
-          await save();
-        });
-      });
+      this.apiKeySetting(containerEl, "openaiSecretId", "openaiApiKey");
       new Setting(containerEl).setName("模型 ID").setDesc("必须是支持图片输入的模型").addText((t) =>
         t.setValue(s.openaiModel).onChange(async (v) => {
           s.openaiModel = v.trim();
@@ -209,4 +239,14 @@ export class CourseTutorSettingTab extends PluginSettingTab {
     numSetting("每个 PDF 最多页数", "超出部分不会发送，界面会提示", "maxPdfPages");
     numSetting("文字资料总字数上限", "超出时界面会提示，不会静默截断", "maxMaterialChars");
   }
+}
+
+export function hasSecretStorage(app: App): boolean {
+  return typeof (app as Partial<App>).secretStorage?.getSecret === "function";
+}
+
+/** 优先读取密钥存储，没有时回退到明文设置 */
+export function resolveApiKey(app: App, secretId: string, plain: string): string {
+  if (secretId && hasSecretStorage(app)) return app.secretStorage.getSecret(secretId) ?? "";
+  return plain;
 }

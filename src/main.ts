@@ -4,7 +4,8 @@ import { CourseRepo } from "./courses.ts";
 import { AnthropicClient } from "./llm/anthropic.ts";
 import { OpenAICompatibleClient } from "./llm/openai.ts";
 import type { LLMClient } from "./llm/types.ts";
-import { CourseTutorSettingTab, DEFAULT_SETTINGS, type CourseTutorSettings } from "./settings.ts";
+import { deviceKind } from "./platform.ts";
+import { CourseTutorSettingTab, DEFAULT_SETTINGS, resolveApiKey, type CourseTutorSettings } from "./settings.ts";
 import { CaptureModal } from "./ui/captureModal.ts";
 import type { PickerState } from "./ui/coursePicker.ts";
 import { REVIEW_VIEW_TYPE, ReviewView } from "./ui/reviewView.ts";
@@ -58,18 +59,20 @@ export default class CourseTutorPlugin extends Plugin {
   createClient(): LLMClient {
     const s = this.settings;
     if (s.provider === "anthropic") {
-      if (!s.anthropicApiKey) throw new Error("请先在插件设置中填写 Anthropic API Key");
+      const apiKey = resolveApiKey(this.app, s.anthropicSecretId, s.anthropicApiKey);
+      if (!apiKey) throw new Error("请先在插件设置中设置 Anthropic API Key");
       return new AnthropicClient({
-        apiKey: s.anthropicApiKey,
+        apiKey,
         model: s.anthropicModel || DEFAULT_SETTINGS.anthropicModel,
         effort: s.anthropicEffort,
         fallbacks: s.anthropicFallbacks,
       });
     }
-    if (!s.openaiApiKey || !s.openaiModel) throw new Error("请先在插件设置中填写 API Key 和模型 ID");
+    const apiKey = resolveApiKey(this.app, s.openaiSecretId, s.openaiApiKey);
+    if (!apiKey || !s.openaiModel) throw new Error("请先在插件设置中设置 API Key 和模型 ID");
     return new OpenAICompatibleClient({
       baseUrl: s.openaiBaseUrl,
-      apiKey: s.openaiApiKey,
+      apiKey,
       model: s.openaiModel,
       maxTokensParam: s.openaiMaxTokensParam,
     });
@@ -86,7 +89,8 @@ export default class CourseTutorPlugin extends Plugin {
     const { workspace } = this.app;
     let leaf = workspace.getLeavesOfType(REVIEW_VIEW_TYPE)[0];
     if (!leaf) {
-      leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf(true);
+      // iPhone 的侧边栏是抽屉，对话不方便，放到主区域；iPad 和 macOS 放右侧边栏，与笔记并排
+      leaf = deviceKind() === "phone" ? workspace.getLeaf("tab") : (workspace.getRightLeaf(false) ?? workspace.getLeaf("tab"));
       await leaf.setViewState({ type: REVIEW_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);

@@ -1,12 +1,15 @@
-import { Modal, Notice, Platform, TFile } from "obsidian";
+import { Modal, Notice, TFile } from "obsidian";
 import { formatDate, formatTime } from "../core/dates.ts";
 import type CourseTutorPlugin from "../main.ts";
-import { imageToJpeg, type EncodedImage } from "../media.ts";
+import { ACCEPT, VaultMediaPicker, fileToPages, vaultFileToBlob, type NamedBlob } from "../inputs.ts";
+import type { EncodedImage } from "../media.ts";
+import { canCaptureFromCamera, deviceKind, supportsDragAndDrop } from "../platform.ts";
 import { TRANSCRIBE_SYSTEM, transcribeUserText } from "../prompts.ts";
 import { CoursePicker } from "./coursePicker.ts";
 
 interface Photo {
   image: EncodedImage;
+  label: string;
   previewUrl: string;
 }
 
@@ -37,8 +40,22 @@ export class CaptureModal extends Modal {
     this.picker.render();
 
     const photoRow = contentEl.createDiv("ct-row ct-photo-buttons");
-    this.addFileButton(photoRow, "拍照", true);
-    this.addFileButton(photoRow, Platform.isMobile ? "从相册选择" : "选择图片", false);
+    if (canCaptureFromCamera()) this.addFileButton(photoRow, "拍照", true);
+    this.addFileButton(photoRow, deviceKind() === "desktop" ? "选择文件" : "照片 / 文件", false);
+    photoRow.createEl("button", { text: "从仓库选择" }).addEventListener("click", () =>
+      new VaultMediaPicker(this.app, (f) => void vaultFileToBlob(this.app, f).then((b) => this.addFiles([b]))).open(),
+    );
+    if (supportsDragAndDrop()) {
+      contentEl.createDiv({ cls: "ct-muted", text: "也可以把图片或 PDF 拖到这里，或直接粘贴。" });
+      this.registerDrop(this.modalEl);
+    }
+    this.modalEl.addEventListener("paste", (e) => {
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length) {
+        e.preventDefault();
+        void this.addFiles(files);
+      }
+    });
     this.thumbsEl = contentEl.createDiv("ct-thumbs");
 
     const extra = contentEl.createEl("textarea", {
@@ -60,34 +77,58 @@ export class CaptureModal extends Modal {
   }
 
   private addFileButton(parent: HTMLElement, label: string, capture: boolean): void {
-    // 桌面端浏览器会忽略 capture 属性，两个按钮行为相同，只保留一个
-    if (capture && !Platform.isMobile) return;
-    const input = parent.createEl("input", { type: "file", attr: { accept: "image/*" } });
+    const input = parent.createEl("input", { type: "file", attr: { accept: capture ? "image/*" : ACCEPT } });
     input.addClass("ct-hidden");
     if (capture) input.setAttr("capture", "environment");
     else input.multiple = true;
-    const btn = parent.createEl("button", { text: label });
+    const btn = parent.createEl("button", { text: label, cls: capture ? "mod-cta" : "" });
     btn.addEventListener("click", () => input.click());
-    input.addEventListener("change", async () => {
+    input.addEventListener("change", () => {
       const files = Array.from(input.files ?? []);
       input.value = "";
-      for (const f of files) {
-        try {
-          const image = await imageToJpeg(f, this.plugin.settings.maxImageEdge);
-          this.photos.push({ image, previewUrl: URL.createObjectURL(new Blob([image.bytes], { type: "image/jpeg" })) });
-        } catch (e) {
-          new Notice(`${f.name}：${e instanceof Error ? e.message : e}`);
+      void this.addFiles(files);
+    });
+  }
+
+  private registerDrop(target: HTMLElement): void {
+    target.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      target.addClass("ct-dragover");
+    });
+    target.addEventListener("dragleave", () => target.removeClass("ct-dragover"));
+    target.addEventListener("drop", (e) => {
+      e.preventDefault();
+      target.removeClass("ct-dragover");
+      void this.addFiles(Array.from(e.dataTransfer?.files ?? []));
+    });
+  }
+
+  private async addFiles(files: NamedBlob[]): Promise<void> {
+    for (const f of files) {
+      this.statusEl.setText(`正在处理 ${f.name}…`);
+      try {
+        const { pages, warning } = await fileToPages(f, this.plugin.settings);
+        for (const p of pages) {
+          this.photos.push({
+            image: p.image,
+            label: p.label,
+            previewUrl: URL.createObjectURL(new Blob([p.image.bytes], { type: "image/jpeg" })),
+          });
         }
+        if (warning) new Notice(warning, 8000);
+      } catch (e) {
+        new Notice(`${f.name}：${e instanceof Error ? e.message : e}`);
       }
       this.renderThumbs();
-    });
+    }
+    this.statusEl.setText("");
   }
 
   private renderThumbs(): void {
     this.thumbsEl.empty();
     this.photos.forEach((p, i) => {
       const t = this.thumbsEl.createDiv("ct-thumb");
-      t.createEl("img", { attr: { src: p.previewUrl } });
+      t.createEl("img", { attr: { src: p.previewUrl, title: p.label } });
       t.createSpan({ cls: "ct-thumb-index", text: String(i + 1) });
       const controls = t.createDiv("ct-thumb-controls");
       if (i > 0) {
@@ -124,7 +165,7 @@ export class CaptureModal extends Modal {
           {
             role: "user",
             parts: [
-              ...this.photos.flatMap((p, i) => [{ type: "text" as const, text: `照片 ${i + 1}：` }, p.image.part]),
+              ...this.photos.flatMap((p, i) => [{ type: "text" as const, text: `照片 ${i + 1}（${p.label}）：` }, p.image.part]),
               { type: "text", text: transcribeUserText(course, date, this.photos.length, this.extra) },
             ],
           },

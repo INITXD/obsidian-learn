@@ -4,7 +4,22 @@
 2. **资料检查**：检查当天的教授笔记是否已经上传，没有就提醒你。
 3. **对话查漏**：把你的笔记、Course Note、教授笔记（PDF 逐页转成图片）一起交给模型，由模型逐题提问，找出“理解漏洞”和“笔记漏记”，最后把报告写回当天的笔记。
 
-桌面端和移动端都能用。在手机上，“拍照”按钮会直接打开相机。
+## 平台
+
+目标平台是 macOS、iOS 和 iPadOS。平台差异集中在 `src/platform.ts`。
+
+| | iPhone | iPad | macOS |
+|---|---|---|---|
+| 拍照 | 直接打开相机 | 直接打开相机 | — |
+| 照片 / 文件（含 PDF） | ✓ | ✓ | ✓ |
+| 从仓库选择（跨设备同步过来的照片、iOS 分享存入的文件） | ✓ | ✓ | ✓ |
+| 拖放 / 粘贴 | 粘贴 | 拖放（分屏）+ 粘贴 | 拖放 + 粘贴 |
+| HEIC 照片 | 系统解码 | 系统解码 | 调用系统自带的 `sips` 转换 |
+| 查漏面板位置 | 主区域标签页 | 右侧边栏 | 右侧边栏 |
+
+拍照整理也支持 PDF，例如 GoodNotes、Notability 导出的手写笔记，或者“文件”App 扫描出来的文档。PDF 会逐页当作照片处理。
+
+API Key：Obsidian 1.11.4 及以上版本使用 Obsidian 的密钥存储，Key 不写入插件的 `data.json`。更早的版本回退为明文保存。
 
 ## 仓库结构（默认值，可在设置中修改）
 
@@ -32,7 +47,7 @@ Courses/                      ← 课程根目录
 - **Anthropic Claude**：默认 `claude-opus-5-5`，effort 默认为 `high`。默认开启服务端拒答回退（`fallbacks: "default"`）。查漏对话会对资料启用提示缓存，降低多轮对话的费用。
 - **OpenAI 兼容接口**：填写 Base URL、Key 和模型 ID。模型必须支持图片输入。
 
-所有请求都通过 Obsidian 的 `requestUrl` 发出，不受 CORS 限制。API Key 以明文保存在 `.obsidian/plugins/obsidian-learn/data.json` 里。如果你会同步或公开这个仓库，请注意这一点。
+所有请求都通过 Obsidian 的 `requestUrl` 发出，不受 CORS 限制。
 
 ## 开发
 
