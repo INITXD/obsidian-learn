@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaContentBlockParam, BetaMessageParam } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import { t } from "../i18n.ts";
 import { obsidianFetch } from "./obsidianFetch.ts";
 import type { CompletionRequest, CompletionResult, LLMClient, Turn } from "./types.ts";
 
@@ -40,7 +41,7 @@ export class AnthropicClient implements LLMClient {
 
     if (res.stop_reason === "refusal") {
       const detail = res.stop_details?.explanation ?? res.stop_details?.category ?? "";
-      throw new Error(`模型拒绝了这次请求${detail ? `：${detail}` : ""}`);
+      throw new Error(`${t("error.refused")}${detail ? `: ${detail}` : ""}`);
     }
     const text = res.content
       .flatMap((b) => (b.type === "text" ? [b.text] : []))

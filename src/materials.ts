@@ -1,11 +1,16 @@
 import { App, TFile } from "obsidian";
 import { IMAGE_EXTS } from "./courses.ts";
+import { format, t, type Lang } from "./i18n.ts";
 import type { Part } from "./llm/types.ts";
 import { imageToJpeg, pdfToImages } from "./media.ts";
+import { materialText } from "./prompts.ts";
 import type { CourseTutorSettings } from "./settings.ts";
 
 export interface MaterialSection {
+  /** 发给模型的分组名（输出语言） */
   label: string;
+  /** 给用户看的分组名（界面语言） */
+  uiLabel: string;
   files: TFile[];
   /** 没有文件时附加给模型的说明 */
   missingNote: string;
@@ -22,56 +27,58 @@ export interface LoadedMaterials {
 export async function loadMaterials(
   app: App,
   settings: CourseTutorSettings,
+  outputLang: Lang,
   sections: MaterialSection[],
 ): Promise<LoadedMaterials> {
+  const m = materialText(outputLang);
+  const tag = (label: string) => (outputLang === "zh" ? `【${label}】` : `[${label}] `);
   const parts: Part[] = [];
   const summary: string[] = [];
   const warnings: string[] = [];
   let textChars = 0;
 
   for (const section of sections) {
+    const label = section.uiLabel;
     if (section.files.length === 0) {
-      parts.push({ type: "text", text: `【${section.label}】${section.missingNote}` });
-      summary.push(`${section.label}：无`);
+      parts.push({ type: "text", text: `${tag(section.label)}${section.missingNote}` });
+      summary.push(t("mat.none", { label }));
       continue;
     }
     for (const file of section.files) {
       const ext = file.extension.toLowerCase();
-      const header = `【${section.label}】${file.path}`;
+      const header = `${tag(section.label)}${file.path}`;
       if (ext === "pdf") {
         const { images, totalPages } = await pdfToImages(
           await app.vault.readBinary(file),
           settings.maxImageEdge,
           settings.maxPdfPages,
         );
-        parts.push({ type: "text", text: `${header}（PDF，共 ${totalPages} 页，以下为逐页图片）` });
+        parts.push({ type: "text", text: format(m.pdfHeader, { header, total: totalPages }) });
         images.forEach((img, i) => {
-          parts.push({ type: "text", text: `${file.name} 第 ${i + 1} 页：` });
+          parts.push({ type: "text", text: format(m.pdfPage, { name: file.name, page: i + 1 }) });
           parts.push(img.part);
         });
         if (totalPages > images.length) {
-          warnings.push(`${file.name} 共 ${totalPages} 页，只发送了前 ${images.length} 页（可在设置中调整上限）`);
-          parts.push({ type: "text", text: `（${file.name} 第 ${images.length + 1}–${totalPages} 页未提供）` });
+          warnings.push(t("mat.pdfTruncated", { name: file.name, total: totalPages, count: images.length }));
+          parts.push({ type: "text", text: format(m.pdfOmitted, { name: file.name, from: images.length + 1, to: totalPages }) });
         }
-        summary.push(`${section.label}：${file.name}（${images.length}/${totalPages} 页）`);
+        summary.push(t("mat.pdf", { label, name: file.name, count: images.length, total: totalPages }));
       } else if (IMAGE_EXTS.includes(ext)) {
-        const blob = new Blob([await app.vault.readBinary(file)]);
+        const blob = Object.assign(new Blob([await app.vault.readBinary(file)]), { name: file.name });
         const img = await imageToJpeg(blob, settings.maxImageEdge);
         parts.push({ type: "text", text: header }, img.part);
-        summary.push(`${section.label}：${file.name}`);
+        summary.push(t("mat.image", { label, name: file.name }));
       } else {
         const text = await app.vault.cachedRead(file);
         textChars += text.length;
         parts.push({ type: "text", text: `${header}\n\n${text}` });
-        summary.push(`${section.label}：${file.name}（${text.length} 字）`);
+        summary.push(t("mat.text", { label, name: file.name, chars: text.length }));
       }
     }
   }
 
   if (textChars > settings.maxMaterialChars) {
-    throw new Error(
-      `文字资料共 ${textChars} 字，超过上限 ${settings.maxMaterialChars} 字。请取消勾选部分文件，或在设置中提高上限。`,
-    );
+    throw new Error(t("error.tooMuchText", { chars: textChars, max: settings.maxMaterialChars }));
   }
   return { parts, summary, warnings };
 }

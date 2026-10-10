@@ -1,10 +1,11 @@
 import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import { formatDate, formatTime } from "../core/dates.ts";
+import { format, t, type Lang } from "../i18n.ts";
 import type { Candidate } from "../courses.ts";
 import type { Turn } from "../llm/types.ts";
 import type CourseTutorPlugin from "../main.ts";
 import { loadMaterials } from "../materials.ts";
-import { REPORT_REQUEST, reviewSystem } from "../prompts.ts";
+import { materialLabels, materialText, noteText, reportRequest, reviewSystem } from "../prompts.ts";
 import { confirmModal } from "./confirm.ts";
 import { CoursePicker, type PickerState } from "./coursePicker.ts";
 
@@ -12,6 +13,8 @@ export const REVIEW_VIEW_TYPE = "course-tutor-review";
 
 interface Session {
   course: string;
+  /** 会话开始时的输出语言；中途改设置不影响本次会话 */
+  lang: Lang;
   date: string;
   turns: Turn[];
   /** 当时实际用作学生笔记的文件，报告写回第一份 */
@@ -43,7 +46,7 @@ export class ReviewView extends ItemView {
     return REVIEW_VIEW_TYPE;
   }
   getDisplayText(): string {
-    return "课程查漏";
+    return t("view.review");
   }
   getIcon(): string {
     return "search-check";
@@ -79,7 +82,7 @@ export class ReviewView extends ItemView {
     el.empty();
     const { course, date } = this.state;
     if (!course) {
-      el.createDiv({ cls: "ct-muted", text: "选择课程后显示资料。" });
+      el.createDiv({ cls: "ct-muted", text: t("review.chooseCourse") });
       return;
     }
     const repo = this.plugin.repo;
@@ -87,25 +90,25 @@ export class ReviewView extends ItemView {
     const courseNotes = repo.courseNoteCandidates(course, date);
     const professor = repo.professorCandidates(course, date);
 
-    this.renderGroup(el, "学生笔记", lecture, `当天没有课堂笔记（${repo.lectureFolder(course)}）。请先拍照生成。`);
-    this.renderGroup(el, "课程笔记", courseNotes, `未找到 Course Note（${repo.courseFolder(course)}/${this.plugin.settings.courseNotePath}）。`);
-    this.renderGroup(el, "教授笔记", professor, "教授笔记文件夹为空。");
+    this.renderGroup(el, t("mat.student"), lecture, t("review.noLecture", { folder: repo.lectureFolder(course) }));
+    this.renderGroup(el, t("mat.courseNote"), courseNotes, t("review.noCourseNote", { path: `${repo.courseFolder(course)}/${this.plugin.settings.courseNotePath}` }));
+    this.renderGroup(el, t("mat.professor"), professor, t("review.noProfessor"), true);
 
     if (!professor.some((c) => c.suggested)) {
       const warn = el.createDiv("ct-warning");
       warn.createSpan({
-        text: `未找到 ${date} 的教授笔记。请上传到 ${repo.professorFolder(course)}（文件名包含日期最可靠），然后重新扫描。也可以手动勾选其他文件，或直接开始（对照可信度较低）。`,
+        text: t("review.missingProfessor", { date, folder: repo.professorFolder(course) }),
       });
-      warn.createEl("button", { text: "重新扫描" }).addEventListener("click", () => this.renderMaterials());
+      warn.createEl("button", { text: t("review.rescan") }).addEventListener("click", () => this.renderMaterials());
     }
 
     const actions = el.createDiv("ct-actions");
-    const start = actions.createEl("button", { text: this.session ? "用当前资料重新开始" : "开始查漏", cls: "mod-cta" });
+    const start = actions.createEl("button", { text: this.session ? t("review.restart") : t("review.start"), cls: "mod-cta" });
     start.disabled = this.busy;
     start.addEventListener("click", () => void this.start());
   }
 
-  private renderGroup(parent: HTMLElement, label: string, items: Candidate[], emptyText: string): void {
+  private renderGroup(parent: HTMLElement, label: string, items: Candidate[], emptyText: string, tagToday = false): void {
     const group = parent.createDiv("ct-group");
     group.createDiv({ cls: "ct-group-title", text: label });
     if (items.length === 0) {
@@ -120,7 +123,7 @@ export class ReviewView extends ItemView {
       cb.checked = this.selection.get(k)!;
       cb.addEventListener("change", () => this.selection.set(k, cb.checked));
       row.createSpan({ text: file.name });
-      if (suggested && label === "教授笔记") row.createSpan({ cls: "ct-tag", text: "当天" });
+      if (suggested && tagToday) row.createSpan({ cls: "ct-tag", text: t("review.todayTag") });
     }
   }
 
@@ -136,26 +139,30 @@ export class ReviewView extends ItemView {
     const professorFiles = this.selected(repo.professorCandidates(course, date));
     if (
       lectureFiles.length === 0 &&
-      !(await confirmModal(this.app, "没有勾选学生笔记，模型只能凭对话判断你的掌握情况。继续？"))
+      !(await confirmModal(this.app, t("review.confirmNoLecture")))
     ) return;
 
     this.session = null;
     this.log = [];
     this.renderChat();
     await this.run(async () => {
-      this.pushLog("system", "正在加载资料（PDF 会逐页转成图片）…");
-      const m = await loadMaterials(this.app, this.plugin.settings, [
-        { label: "学生笔记", files: lectureFiles, missingNote: "未提供。" },
-        { label: "课程笔记", files: courseNoteFiles, missingNote: "未提供。" },
-        { label: "教授笔记", files: professorFiles, missingNote: "未提供。对照只能基于课程笔记和学科常识，请在回复中说明可信度较低。" },
+      this.pushLog("system", t("review.loading"));
+      const lang = this.plugin.outputLang();
+      const labels = materialLabels(lang);
+      const text = materialText(lang);
+      const m = await loadMaterials(this.app, this.plugin.settings, lang, [
+        { label: labels.student, uiLabel: t("mat.student"), files: lectureFiles, missingNote: text.missing },
+        { label: labels.courseNote, uiLabel: t("mat.courseNote"), files: courseNoteFiles, missingNote: text.missing },
+        { label: labels.professor, uiLabel: t("mat.professor"), files: professorFiles, missingNote: text.missingProfessor },
       ]);
       this.log.pop();
-      this.pushLog("system", `已发送资料：\n- ${m.summary.join("\n- ")}${m.warnings.length ? `\n\n⚠️ ${m.warnings.join("\n⚠️ ")}` : ""}`);
+      this.pushLog("system", `${t("review.sent")}\n- ${m.summary.join("\n- ")}${m.warnings.length ? `\n\n⚠️ ${m.warnings.join("\n⚠️ ")}` : ""}`);
       this.session = {
         course,
         date,
+        lang,
         lectureFiles,
-        turns: [{ role: "user", parts: [...m.parts, { type: "text", text: "资料如上，请开始。" }] }],
+        turns: [{ role: "user", parts: [...m.parts, { type: "text", text: text.start }] }],
       };
       await this.ask();
     });
@@ -165,13 +172,13 @@ export class ReviewView extends ItemView {
   private async ask(): Promise<string> {
     const s = this.session!;
     const res = await this.plugin.createClient().complete({
-      system: reviewSystem(s.course, s.date),
+      system: reviewSystem(s.lang, s.course, s.date),
       turns: s.turns,
       maxTokens: 16000,
       cacheFirstTurn: true,
     });
     s.turns.push({ role: "assistant", parts: [{ type: "text", text: res.text }], raw: res.raw });
-    this.pushLog("assistant", res.text + (res.truncated ? "\n\n> [!warning] 回复达到长度上限被截断。" : ""));
+    this.pushLog("assistant", res.text + (res.truncated ? `\n\n> [!warning] ${t("review.replyTruncated")}` : ""));
     return res.text;
   }
 
@@ -189,25 +196,27 @@ export class ReviewView extends ItemView {
     const s = this.session;
     if (!s) return;
     const before = s.turns.length;
-    s.turns.push({ role: "user", parts: [{ type: "text", text: REPORT_REQUEST }] });
-    this.pushLog("system", "正在生成查漏报告…");
+    s.turns.push({ role: "user", parts: [{ type: "text", text: reportRequest(s.lang) }] });
+    const generating = t("review.generatingReport");
+    this.pushLog("system", generating);
     await this.run(
       async () => {
         const reportText = await this.ask();
-        this.log = this.log.filter((e) => e.text !== "正在生成查漏报告…");
+        this.log = this.log.filter((e) => e.text !== generating);
+        const nt = noteText(s.lang);
         const target = await this.reportTarget(s);
         const transcript = this.log
           .filter((e) => e.role !== "system")
           .slice(0, -1)
-          .map((e) => `**${e.role === "user" ? "我" : "助教"}**：${e.text}`)
+          .map((e) => `**${e.role === "user" ? nt.me : nt.tutor}**: ${e.text}`)
           .join("\n\n");
         const quoted = transcript.split("\n").map((l) => `> ${l}`).join("\n");
         await this.app.vault.append(
           target,
-          `\n\n## 查漏报告（${formatTime(new Date())}）\n\n${reportText}\n\n> [!quote]- 对话记录\n${quoted}\n`,
+          `\n\n## ${format(nt.report, { time: formatTime(new Date()) })}\n\n${reportText}\n\n> [!quote]- ${nt.transcript}\n${quoted}\n`,
         );
-        this.pushLog("system", `报告已写入 ${target.path}`);
-        new Notice(`查漏报告已写入 ${target.path}`);
+        this.pushLog("system", t("review.reportWritten", { path: target.path }));
+        new Notice(t("review.reportWritten", { path: target.path }));
       },
       () => (s.turns.length = before),
     );
@@ -223,6 +232,11 @@ export class ReviewView extends ItemView {
     return this.app.vault.create(path, `---\ncourse: "${s.course}"\ndate: ${s.date}\ntype: lecture-note\n---\n\n# ${s.date} ${s.course}\n`);
   }
 
+  /** 进度提示：请求失败时从对话中移除 */
+  private get pending(): Set<string> {
+    return new Set([t("review.loading"), t("review.generatingReport")]);
+  }
+
   private async run(fn: () => Promise<void>, onError?: () => void): Promise<void> {
     this.busy = true;
     this.renderComposer();
@@ -231,7 +245,7 @@ export class ReviewView extends ItemView {
     } catch (e) {
       onError?.();
       const last = this.log[this.log.length - 1];
-      if (last?.role === "system" && last.text.startsWith("正在")) this.log.pop();
+      if (last?.role === "system" && this.pending.has(last.text)) this.log.pop();
       this.pushLog("system", `❌ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       this.busy = false;
@@ -252,7 +266,7 @@ export class ReviewView extends ItemView {
       const bubble = el.createDiv(`ct-msg ct-msg-${entry.role}`);
       void MarkdownRenderer.render(this.app, entry.text, bubble, sourcePath, this);
     }
-    if (this.busy) el.createDiv({ cls: "ct-muted", text: "等待模型回复…" });
+    if (this.busy) el.createDiv({ cls: "ct-muted", text: t("review.waiting") });
     el.scrollTop = el.scrollHeight;
   }
 
@@ -262,11 +276,11 @@ export class ReviewView extends ItemView {
     el.empty();
     this.renderChat();
     if (!this.session) return;
-    const input = el.createEl("textarea", { attr: { rows: "3", placeholder: "回答问题，或提出你的疑问（Ctrl/Cmd+Enter 发送）" } });
+    const input = el.createEl("textarea", { attr: { rows: "3", placeholder: t("review.inputPlaceholder") } });
     input.disabled = this.busy;
     const actions = el.createDiv("ct-actions");
-    const send = actions.createEl("button", { text: "发送", cls: "mod-cta" });
-    const reportBtn = actions.createEl("button", { text: "生成报告并写入笔记" });
+    const send = actions.createEl("button", { text: t("review.send"), cls: "mod-cta" });
+    const reportBtn = actions.createEl("button", { text: t("review.report") });
     send.disabled = reportBtn.disabled = this.busy;
     const submit = () => {
       const text = input.value;

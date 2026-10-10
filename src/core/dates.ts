@@ -1,3 +1,5 @@
+import { t } from "../i18n.ts";
+
 /** 本地日期 YYYY-MM-DD */
 export function formatDate(d: Date): string {
   const y = d.getFullYear();
@@ -9,7 +11,7 @@ export function formatDate(d: Date): string {
 /** 解析 YYYY-MM-DD 为本地时间当天 00:00 */
 export function parseDate(s: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
-  if (!m) throw new Error(`日期格式应为 YYYY-MM-DD：${s}`);
+  if (!m) throw new Error(t("error.dateFormat", { value: s }));
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 

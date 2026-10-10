@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import type { CompletionRequest, CompletionResult, LLMClient } from "./types.ts";
 import { textOf } from "./types.ts";
+import { t } from "../i18n.ts";
 
 export type MaxTokensParam = "max_tokens" | "max_completion_tokens" | "none";
 
@@ -46,7 +47,7 @@ export class OpenAICompatibleClient implements LLMClient {
       throw: false,
     });
     if (res.status >= 400) {
-      throw new Error(`接口返回 ${res.status}：${res.text.slice(0, 500)}`);
+      throw new Error(t("error.http", { status: res.status, body: res.text.slice(0, 500) }));
     }
     const choice = res.json?.choices?.[0];
     const content = choice?.message?.content;
@@ -55,7 +56,7 @@ export class OpenAICompatibleClient implements LLMClient {
       : Array.isArray(content)
         ? content.map((c: { text?: string }) => c.text ?? "").join("")
         : "";
-    if (!text && choice?.finish_reason === "content_filter") throw new Error("请求被提供方的内容过滤拦截");
+    if (!text && choice?.finish_reason === "content_filter") throw new Error(t("error.contentFilter"));
     return {
       text: text.trim(),
       raw: { provider: this.provider, content },

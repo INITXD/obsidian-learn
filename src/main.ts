@@ -1,11 +1,13 @@
+import * as obsidian from "obsidian";
 import { Notice, Plugin } from "obsidian";
+import { setUiLang, t, toLang, type Lang } from "./i18n.ts";
 import { CalendarService } from "./calendar.ts";
 import { CourseRepo } from "./courses.ts";
 import { AnthropicClient } from "./llm/anthropic.ts";
 import { OpenAICompatibleClient } from "./llm/openai.ts";
 import type { LLMClient } from "./llm/types.ts";
 import { deviceKind } from "./platform.ts";
-import { CourseTutorSettingTab, DEFAULT_SETTINGS, resolveApiKey, type CourseTutorSettings } from "./settings.ts";
+import { CourseTutorSettingTab, defaultSettings, resolveApiKey, type CourseTutorSettings } from "./settings.ts";
 import { CaptureModal } from "./ui/captureModal.ts";
 import type { PickerState } from "./ui/coursePicker.ts";
 import { REVIEW_VIEW_TYPE, ReviewView } from "./ui/reviewView.ts";
@@ -22,14 +24,16 @@ interface PluginData {
 }
 
 export default class CourseTutorPlugin extends Plugin {
-  settings: CourseTutorSettings = { ...DEFAULT_SETTINGS };
+  settings: CourseTutorSettings = defaultSettings("en");
   icsCache: IcsCache | undefined;
   repo!: CourseRepo;
   calendar!: CalendarService;
 
   async onload(): Promise<void> {
     const data = ((await this.loadData()) ?? {}) as Partial<PluginData>;
-    this.settings = { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) };
+    const saved: Partial<CourseTutorSettings> = data.settings ?? {};
+    this.settings = { ...defaultSettings(this.resolveUiLang(saved.uiLanguage)), ...saved };
+    this.applyUiLanguage();
     this.icsCache = data.icsCache;
     this.repo = new CourseRepo(this.app, () => this.settings);
     this.calendar = new CalendarService(this);
@@ -37,10 +41,35 @@ export default class CourseTutorPlugin extends Plugin {
     this.registerView(REVIEW_VIEW_TYPE, (leaf) => new ReviewView(leaf, this));
     this.addSettingTab(new CourseTutorSettingTab(this.app, this));
 
-    this.addRibbonIcon("camera", "拍照整理课堂笔记", () => this.openCapture());
-    this.addRibbonIcon("search-check", "课程查漏", () => void this.openReview());
-    this.addCommand({ id: "capture-notes", name: "拍照整理课堂笔记", callback: () => this.openCapture() });
-    this.addCommand({ id: "open-review", name: "对当日课程查漏", callback: () => void this.openReview() });
+    this.addRibbonIcon("camera", t("cmd.capture"), () => this.openCapture());
+    this.addRibbonIcon("search-check", t("view.review"), () => void this.openReview());
+    this.addCommand({ id: "capture-notes", name: t("cmd.capture"), callback: () => this.openCapture() });
+    this.addCommand({ id: "open-review", name: t("cmd.review"), callback: () => void this.openReview() });
+  }
+
+  /** Obsidian 的界面语言。getLanguage() 自 1.8.7 起提供，更早的版本读 localStorage */
+  private appLang(): Lang {
+    const getLanguage = (obsidian as { getLanguage?: () => string }).getLanguage;
+    if (typeof getLanguage === "function") return toLang(getLanguage());
+    try {
+      return toLang(window.localStorage.getItem("language"));
+    } catch {
+      return "en";
+    }
+  }
+
+  private resolveUiLang(setting: CourseTutorSettings["uiLanguage"] | undefined): Lang {
+    return !setting || setting === "auto" ? this.appLang() : setting;
+  }
+
+  applyUiLanguage(): void {
+    setUiLang(this.resolveUiLang(this.settings.uiLanguage));
+  }
+
+  /** 生成笔记、查漏对话和报告使用的语言 */
+  outputLang(): Lang {
+    const o = this.settings.outputLanguage;
+    return o === "ui" ? this.resolveUiLang(this.settings.uiLanguage) : o;
   }
 
   private async persist(): Promise<void> {
@@ -60,16 +89,16 @@ export default class CourseTutorPlugin extends Plugin {
     const s = this.settings;
     if (s.provider === "anthropic") {
       const apiKey = resolveApiKey(this.app, s.anthropicSecretId, s.anthropicApiKey);
-      if (!apiKey) throw new Error("请先在插件设置中设置 Anthropic API Key");
+      if (!apiKey) throw new Error(t("error.anthropicKey"));
       return new AnthropicClient({
         apiKey,
-        model: s.anthropicModel || DEFAULT_SETTINGS.anthropicModel,
+        model: s.anthropicModel || defaultSettings("en").anthropicModel,
         effort: s.anthropicEffort,
         fallbacks: s.anthropicFallbacks,
       });
     }
     const apiKey = resolveApiKey(this.app, s.openaiSecretId, s.openaiApiKey);
-    if (!apiKey || !s.openaiModel) throw new Error("请先在插件设置中设置 API Key 和模型 ID");
+    if (!apiKey || !s.openaiModel) throw new Error(t("error.openaiKey"));
     return new OpenAICompatibleClient({
       baseUrl: s.openaiBaseUrl,
       apiKey,
@@ -80,7 +109,7 @@ export default class CourseTutorPlugin extends Plugin {
 
   openCapture(): void {
     if (this.repo.listCourses().length === 0) {
-      new Notice(`没有找到课程文件夹：请检查设置中的课程根目录（当前：${this.settings.coursesRoot || "仓库根目录"}）`);
+      new Notice(t("notice.noCourses", { root: this.settings.coursesRoot || t("vaultRoot") }));
     }
     new CaptureModal(this).open();
   }

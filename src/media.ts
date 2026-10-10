@@ -1,5 +1,6 @@
 import { arrayBufferToBase64, loadPdfJs } from "obsidian";
 import type { Part } from "./llm/types.ts";
+import { t } from "./i18n.ts";
 import { convertHeicOnMac, isHeic } from "./platform.ts";
 
 export interface EncodedImage {
@@ -10,7 +11,7 @@ export interface EncodedImage {
 /** 编码后立即释放画布：iOS WebView 的画布总内存很小，PDF 页数多时不释放会崩溃 */
 async function canvasToJpeg(canvas: HTMLCanvasElement, quality = 0.85): Promise<EncodedImage> {
   const blob = await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("图片编码失败"))), "image/jpeg", quality),
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error(t("error.encode")))), "image/jpeg", quality),
   );
   canvas.width = canvas.height = 0;
   const bytes = await blob.arrayBuffer();
@@ -40,7 +41,7 @@ export async function imageToJpeg(file: Blob & { name?: string }, maxEdge: numbe
     const jpeg = await convertHeicOnMac(await file.arrayBuffer());
     if (jpeg) decoded = await decodeImage(new Blob([jpeg], { type: "image/jpeg" }));
   }
-  if (!decoded) throw new Error("无法解码图片（格式不受支持）");
+  if (!decoded) throw new Error(t("error.decode"));
   const { img, url } = decoded;
   try {
     const scale = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
@@ -48,7 +49,7 @@ export async function imageToJpeg(file: Blob & { name?: string }, maxEdge: numbe
     canvas.width = Math.round(img.naturalWidth * scale);
     canvas.height = Math.round(img.naturalHeight * scale);
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("无法创建画布");
+    if (!ctx) throw new Error(t("error.canvas"));
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -79,7 +80,7 @@ export async function pdfToImages(data: ArrayBuffer, maxEdge: number, maxPages: 
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
       const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("无法创建画布");
+      if (!ctx) throw new Error(t("error.canvas"));
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport }).promise;

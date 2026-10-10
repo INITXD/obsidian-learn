@@ -1,10 +1,11 @@
 import { Modal, Notice, TFile } from "obsidian";
 import { formatDate, formatTime } from "../core/dates.ts";
+import { format, t } from "../i18n.ts";
 import type CourseTutorPlugin from "../main.ts";
 import { ACCEPT, VaultMediaPicker, fileToPages, vaultFileToBlob, type NamedBlob } from "../inputs.ts";
 import type { EncodedImage } from "../media.ts";
 import { canCaptureFromCamera, deviceKind, supportsDragAndDrop } from "../platform.ts";
-import { TRANSCRIBE_SYSTEM, transcribeUserText } from "../prompts.ts";
+import { noteText, photoLabel, transcribeSystem, transcribeUserText } from "../prompts.ts";
 import { CoursePicker } from "./coursePicker.ts";
 
 interface Photo {
@@ -28,7 +29,7 @@ export class CaptureModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("ct-modal");
-    this.titleEl.setText("拍照整理课堂笔记");
+    this.titleEl.setText(t("capture.title"));
     const { contentEl } = this;
 
     this.picker = new CoursePicker(
@@ -40,13 +41,13 @@ export class CaptureModal extends Modal {
     this.picker.render();
 
     const photoRow = contentEl.createDiv("ct-row ct-photo-buttons");
-    if (canCaptureFromCamera()) this.addFileButton(photoRow, "拍照", true);
-    this.addFileButton(photoRow, deviceKind() === "desktop" ? "选择文件" : "照片 / 文件", false);
-    photoRow.createEl("button", { text: "从仓库选择" }).addEventListener("click", () =>
+    if (canCaptureFromCamera()) this.addFileButton(photoRow, t("capture.camera"), true);
+    this.addFileButton(photoRow, deviceKind() === "desktop" ? t("capture.chooseFiles") : t("capture.photosOrFiles"), false);
+    photoRow.createEl("button", { text: t("capture.fromVault") }).addEventListener("click", () =>
       new VaultMediaPicker(this.app, (f) => void vaultFileToBlob(this.app, f).then((b) => this.addFiles([b]))).open(),
     );
     if (supportsDragAndDrop()) {
-      contentEl.createDiv({ cls: "ct-muted", text: "也可以把图片或 PDF 拖到这里，或直接粘贴。" });
+      contentEl.createDiv({ cls: "ct-muted", text: t("capture.dropHint") });
       this.registerDrop(this.modalEl);
     }
     this.modalEl.addEventListener("paste", (e) => {
@@ -60,13 +61,13 @@ export class CaptureModal extends Modal {
 
     const extra = contentEl.createEl("textarea", {
       cls: "ct-extra",
-      attr: { placeholder: "补充说明（可选），例如：第 3 张是黑板照片；符号 ⊕ 表示异或", rows: "2" },
+      attr: { placeholder: t("capture.extraPlaceholder"), rows: "2" },
     });
     extra.addEventListener("input", () => (this.extra = extra.value));
 
     this.statusEl = contentEl.createDiv("ct-status");
     const actions = contentEl.createDiv("ct-actions");
-    this.generateBtn = actions.createEl("button", { text: "生成笔记", cls: "mod-cta" });
+    this.generateBtn = actions.createEl("button", { text: t("capture.generate"), cls: "mod-cta" });
     this.generateBtn.addEventListener("click", () => void this.generate());
     this.updateButton();
   }
@@ -105,7 +106,7 @@ export class CaptureModal extends Modal {
 
   private async addFiles(files: NamedBlob[]): Promise<void> {
     for (const f of files) {
-      this.statusEl.setText(`正在处理 ${f.name}…`);
+      this.statusEl.setText(t("capture.processing", { name: f.name }));
       try {
         const { pages, warning } = await fileToPages(f, this.plugin.settings);
         for (const p of pages) {
@@ -155,30 +156,31 @@ export class CaptureModal extends Modal {
     const { course, date } = this.picker.state;
     this.busy = true;
     this.updateButton();
-    this.statusEl.setText(`正在识别 ${this.photos.length} 张照片…`);
+    this.statusEl.setText(t("capture.recognizing", { count: this.photos.length }));
+    const lang = this.plugin.outputLang();
     try {
       const llm = this.plugin.createClient();
       const res = await llm.complete({
-        system: TRANSCRIBE_SYSTEM,
+        system: transcribeSystem(lang),
         maxTokens: 16000,
         turns: [
           {
             role: "user",
             parts: [
-              ...this.photos.flatMap((p, i) => [{ type: "text" as const, text: `照片 ${i + 1}（${p.label}）：` }, p.image.part]),
-              { type: "text", text: transcribeUserText(course, date, this.photos.length, this.extra) },
+              ...this.photos.flatMap((p, i) => [{ type: "text" as const, text: photoLabel(lang, i + 1, p.label) }, p.image.part]),
+              { type: "text", text: transcribeUserText(lang, course, date, this.photos.length, this.extra) },
             ],
           },
         ],
       });
-      if (!res.text) throw new Error("模型没有返回内容");
+      if (!res.text) throw new Error(t("error.emptyResponse"));
 
-      this.statusEl.setText("正在写入笔记…");
+      this.statusEl.setText(t("capture.writing"));
       const file = await this.writeNote(course, date, res.text, res.truncated);
       this.showResult(course, date, file, res.truncated);
     } catch (e) {
       this.statusEl.empty();
-      this.statusEl.createDiv({ cls: "ct-error", text: `失败：${e instanceof Error ? e.message : e}` });
+      this.statusEl.createDiv({ cls: "ct-error", text: t("capture.failed", { error: e instanceof Error ? e.message : String(e) }) });
     } finally {
       this.busy = false;
       this.updateButton();
@@ -197,16 +199,17 @@ export class CaptureModal extends Modal {
         embeds.push(f.path);
       }
     }
-    const truncatedNote = truncated ? "\n\n> [!warning] 输出达到长度上限被截断，后面的照片内容可能缺失。\n" : "";
+    const nt = noteText(this.plugin.outputLang());
+    const truncatedNote = truncated ? `\n\n> [!warning] ${nt.truncated}\n` : "";
     const photosBlock = embeds.length
-      ? `\n\n> [!info]- 原始照片\n${embeds.map((p) => `> ![[${p}]]`).join("\n")}\n`
+      ? `\n\n> [!info]- ${nt.photos}\n${embeds.map((p) => `> ![[${p}]]`).join("\n")}\n`
       : "";
 
     const notePath = repo.lectureNotePath(course, date);
     const existing = this.app.vault.getFileByPath(notePath);
     if (existing) {
       // 同一天多次拍照：追加，不覆盖
-      const section = `\n\n## 补充（${formatTime(new Date())}）\n\n${body}${truncatedNote}${photosBlock}`;
+      const section = `\n\n## ${format(nt.addendum, { time: formatTime(new Date()) })}\n\n${body}${truncatedNote}${photosBlock}`;
       await this.app.vault.append(existing, section);
       return existing;
     }
@@ -228,12 +231,12 @@ export class CaptureModal extends Modal {
   private showResult(course: string, date: string, file: TFile, truncated: boolean): void {
     const el = this.statusEl;
     el.empty();
-    el.createDiv({ cls: "ct-success", text: `已写入 ${file.path}` });
-    if (truncated) el.createDiv({ cls: "ct-warning", text: "输出被截断，建议减少单次照片数量后补拍。" });
+    el.createDiv({ cls: "ct-success", text: t("capture.written", { path: file.path }) });
+    if (truncated) el.createDiv({ cls: "ct-warning", text: t("capture.truncated") });
 
     const hasProfessorNotes = this.plugin.repo.professorCandidates(course, date).some((c) => c.suggested);
     if (!hasProfessorNotes) {
-      const msg = `未找到 ${date} 的教授笔记，请上传到 ${this.plugin.repo.professorFolder(course)}`;
+      const msg = t("capture.missingProfessor", { date, folder: this.plugin.repo.professorFolder(course) });
       el.createDiv({ cls: "ct-warning", text: msg });
       new Notice(msg, 10000);
     }
@@ -243,11 +246,11 @@ export class CaptureModal extends Modal {
     this.renderThumbs();
 
     const actions = el.createDiv("ct-actions");
-    actions.createEl("button", { text: "打开笔记" }).addEventListener("click", () => {
+    actions.createEl("button", { text: t("capture.openNote") }).addEventListener("click", () => {
       void this.app.workspace.getLeaf(false).openFile(file);
       this.close();
     });
-    actions.createEl("button", { text: "开始查漏", cls: "mod-cta" }).addEventListener("click", () => {
+    actions.createEl("button", { text: t("capture.startReview"), cls: "mod-cta" }).addEventListener("click", () => {
       this.close();
       void this.plugin.openReview({ course, date });
     });

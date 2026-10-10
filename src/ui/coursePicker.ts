@@ -1,5 +1,6 @@
 import { setIcon } from "obsidian";
 import { formatDate, formatTime } from "../core/dates.ts";
+import { t } from "../i18n.ts";
 import type CourseTutorPlugin from "../main.ts";
 import type { CourseEvent } from "../calendar.ts";
 
@@ -26,7 +27,7 @@ export class CoursePicker {
     c.addClass("ct-picker");
 
     const dateRow = c.createDiv("ct-row");
-    dateRow.createSpan({ text: "日期" });
+    dateRow.createSpan({ text: t("picker.date") });
     const dateInput = dateRow.createEl("input", { type: "date", value: this.state.date });
     dateInput.addEventListener("change", () => {
       if (!dateInput.value) return;
@@ -34,7 +35,7 @@ export class CoursePicker {
       void this.loadEvents(false);
       this.onChange();
     });
-    const todayBtn = dateRow.createEl("button", { text: "今天" });
+    const todayBtn = dateRow.createEl("button", { text: t("picker.today") });
     todayBtn.addEventListener("click", () => {
       this.state.date = dateInput.value = formatDate(new Date());
       void this.loadEvents(false);
@@ -44,10 +45,10 @@ export class CoursePicker {
     this.eventsEl = c.createDiv("ct-events");
 
     const courseRow = c.createDiv("ct-row");
-    courseRow.createSpan({ text: "课程" });
+    courseRow.createSpan({ text: t("picker.course") });
     this.select = courseRow.createEl("select", { cls: "dropdown" });
     const courses = this.plugin.repo.listCourses();
-    this.select.createEl("option", { text: courses.length ? "请选择课程" : "未找到课程文件夹（检查设置）", value: "" });
+    this.select.createEl("option", { text: courses.length ? t("picker.chooseCourse") : t("picker.noCourses"), value: "" });
     for (const name of courses) this.select.createEl("option", { text: name, value: name });
     this.select.value = this.state.course;
     this.select.addEventListener("change", () => this.setCourse(this.select.value));
@@ -68,27 +69,27 @@ export class CoursePicker {
     const el = this.eventsEl;
     el.empty();
     if (!this.plugin.settings.icsUrl) {
-      el.createDiv({ cls: "ct-muted", text: "未设置课表订阅链接，请直接选择课程。" });
+      el.createDiv({ cls: "ct-muted", text: t("picker.noIcs") });
       return;
     }
     const header = el.createDiv("ct-row ct-events-header");
-    header.createSpan({ text: `${this.state.date} 课表` });
-    const refresh = header.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "刷新课表" } });
+    header.createSpan({ text: t("picker.timetable", { date: this.state.date }) });
+    const refresh = header.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("picker.refresh") } });
     setIcon(refresh, "refresh-cw");
     refresh.addEventListener("click", () => void this.loadEvents(true));
-    const list = el.createDiv({ cls: "ct-muted", text: "加载中…" });
+    const list = el.createDiv({ cls: "ct-muted", text: t("picker.loading") });
 
     const date = this.state.date;
     const { events, error, stale } = await this.plugin.calendar.eventsOn(date, force);
     if (date !== this.state.date) return;
     list.remove();
     if (error) {
-      el.createDiv({ cls: "ct-warning", text: `课表加载失败：${error}` });
+      el.createDiv({ cls: "ct-warning", text: t("picker.loadFailed", { error }) });
       return;
     }
-    if (stale) el.createDiv({ cls: "ct-warning", text: "网络不可用，显示的是上次缓存的课表。" });
+    if (stale) el.createDiv({ cls: "ct-warning", text: t("picker.stale") });
     if (events.length === 0) {
-      el.createDiv({ cls: "ct-muted", text: "当天课表没有事件。" });
+      el.createDiv({ cls: "ct-muted", text: t("picker.noEvents") });
       return;
     }
     for (const ev of events) this.renderEvent(el, ev);
@@ -111,7 +112,7 @@ export class CoursePicker {
       item.addEventListener("click", () => this.setCourse(ev.course!));
     } else {
       item.addClass("is-unmatched");
-      item.setAttr("title", "没有对应的课程文件夹。如果这是课程，请在设置中添加别名。");
+      item.setAttr("title", t("picker.unmatched"));
     }
   }
 

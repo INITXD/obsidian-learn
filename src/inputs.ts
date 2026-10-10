@@ -1,6 +1,7 @@
 import { App, FuzzySuggestModal, TFile } from "obsidian";
 import { IMAGE_EXTS } from "./courses.ts";
 import { imageToJpeg, pdfToImages, type EncodedImage } from "./media.ts";
+import { t } from "./i18n.ts";
 import { isHeic } from "./platform.ts";
 import type { CourseTutorSettings } from "./settings.ts";
 
@@ -31,16 +32,16 @@ export async function fileToPages(
   if (isPdf(file)) {
     const { images, totalPages } = await pdfToImages(await file.arrayBuffer(), settings.maxImageEdge, settings.maxPdfPages);
     return {
-      pages: images.map((image, i) => ({ image, label: `${file.name} 第 ${i + 1} 页` })),
+      pages: images.map((image, i) => ({ image, label: t("input.pdfPage", { name: file.name, page: i + 1 }) })),
       warning: totalPages > images.length
-        ? `${file.name} 共 ${totalPages} 页，只导入了前 ${images.length} 页（可在设置中调整上限）`
+        ? t("input.pdfTruncated", { name: file.name, total: totalPages, count: images.length })
         : undefined,
     };
   }
   if (isImage(file)) {
     return { pages: [{ image: await imageToJpeg(file, settings.maxImageEdge), label: file.name }] };
   }
-  throw new Error(`${file.name}：不支持的文件类型`);
+  throw new Error(t("error.unsupportedFile", { name: file.name }));
 }
 
 export async function vaultFileToBlob(app: App, file: TFile): Promise<NamedBlob> {
@@ -57,7 +58,7 @@ export async function vaultFileToBlob(app: App, file: TFile): Promise<NamedBlob>
 export class VaultMediaPicker extends FuzzySuggestModal<TFile> {
   constructor(app: App, private onPick: (file: TFile) => void) {
     super(app);
-    this.setPlaceholder("选择仓库中的图片或 PDF（按修改时间排序）");
+    this.setPlaceholder(t("input.vaultPlaceholder"));
   }
 
   getItems(): TFile[] {
